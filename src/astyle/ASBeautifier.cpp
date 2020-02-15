@@ -96,7 +96,7 @@ void ASBeautifier::initStatic()
     verilogBlockBegin.push_back(&AS_TASK      );
     verilogBlockBegin.push_back(&AS_SPECIFY   );
     verilogBlockBegin.push_back(&AS_PRIMITIVE );
-    //verilogBlockBegin.push_back(&AS_MODULE    );
+    verilogBlockBegin.push_back(&AS_MODULE    );
     verilogBlockBegin.push_back(&AS_BEGIN     );
 
     verilogBlockEnd.push_back(&AS_ENDCASE      );
@@ -107,7 +107,7 @@ void ASBeautifier::initStatic()
     verilogBlockEnd.push_back(&AS_ENDTABLE     );
     verilogBlockEnd.push_back(&AS_ENDSPECIFY   );
     verilogBlockEnd.push_back(&AS_ENDPRIMITIVE );
-    //verilogBlockEnd.push_back(&AS_ENDMODULE    );
+    verilogBlockEnd.push_back(&AS_ENDMODULE    );
     verilogBlockEnd.push_back(&AS_END          );
 
     preprocessorHeaders.push_back(&PRO_CELLDEFINE           );
@@ -149,6 +149,8 @@ ASBeautifier::ASBeautifier()
     isMinimalConditinalIndentSet = false;
     shouldForceTabIndentation = false;
 
+    isInModule = false;
+
     setSpaceIndentation(4);
     setMaxInStatementIndentLength(40);
 
@@ -159,6 +161,7 @@ ASBeautifier::ASBeautifier()
 
     setLabelIndent(false);
     setEmptyLineFill(false);
+    setTrimWhiteSpace(false);
     //setCStyle();
     setPreprocessorIndent(false);
 }
@@ -434,6 +437,11 @@ void ASBeautifier::setLabelIndent(bool state)
     labelIndent = state;
 }
 
+void ASBeautifier::setTrimWhiteSpace(bool state)
+{
+    trimWhiteSpace = state;
+}
+
 /**
 * set the state of the preprocessor indentation option.
 * If true, multiline #define statements will be indented.
@@ -687,9 +695,13 @@ string ASBeautifier::beautify(const string &originalLine)
         --tabCount;
     }
 
+    bool moduleShouldExit = false;
+    bool lastCharIsWS = false;
+
     // parse characters in the current line.
     bool isFirstLoop = true ;
     int  iLength = line.length();
+    int  j = -1;
     for (i=0; i<iLength; (i=i+1,isFirstLoop=false))
     {
         tempCh = line[i];
@@ -697,10 +709,22 @@ string ASBeautifier::beautify(const string &originalLine)
         prevCh = ch;
         ch = tempCh;
 
-        outBuffer.append(1, ch);
+        if (ch == ';') moduleShouldExit = true;
 
         if (isWhiteSpace(ch))
+        {
+            if (!trimWhiteSpace || isInQuote || isInComment || !lastCharIsWS)
+            {
+                outBuffer.push_back(' ');
+                ++j;
+            }
+            lastCharIsWS = true;
             continue;
+        }
+
+        lastCharIsWS = false;
+        outBuffer.push_back(ch);
+        ++j;
 
         // handle special characters (i.e. backslash+character such as \n, \t, ...)
         if (isSpecialChar)
@@ -780,14 +804,16 @@ string ASBeautifier::beautify(const string &originalLine)
         {
             outBuffer.append(vBlockEnd->substr(1));
             i = i+ vBlockEnd->length()-1;
+            j += vBlockEnd->length()-1;
             ch = '}';
             if(vBlockEnd==&AS_ENDCASE)
                 isInCase--;
         }
-        else if(vBlockBegin   != NULL)
+        else if(vBlockBegin != NULL)
         {
             outBuffer.append(vBlockBegin->substr(1));
             i = i+ vBlockBegin->length()-1;
+            j += vBlockBegin->length()-1;
             ch = '{';
             if(vBlockBegin==&AS_CASE || vBlockBegin==&AS_CASEZ ||vBlockBegin==&AS_CASEX )
                 isInCase++;
@@ -820,16 +846,15 @@ string ASBeautifier::beautify(const string &originalLine)
                 inStatementIndentStackSizeStack->push_back(inStatementIndentStack->size());
 
                 if (currentHeader != NULL)
-                    registerInStatementIndent(line, i, spaceTabCount, minConditionalIndent/*indentLength*2*/, true);
+                    registerInStatementIndent(line, i, spaceTabCount+j-i, minConditionalIndent/*indentLength*2*/, true);
                 else
-                    registerInStatementIndent(line, i, spaceTabCount, 0, true);
+                    registerInStatementIndent(line, i, spaceTabCount+j-i, 0, true);
             }
             else if (ch == ')' || ch == ']')
             {
                 parenDepth--;
                 if (parenDepth == 0)
                 {
-
                     ch = ' ';
                     isInConditional = false;
                 }
@@ -858,6 +883,10 @@ string ASBeautifier::beautify(const string &originalLine)
         {
             // this bracket is a block opener...
             ++lineOpeningBlocksNum;
+            // FIXME: this would fail when case has an
+            // open parenthesis and multiline lists
+            if (vBlockBegin == &AS_MODULE)
+                isInModule = true;
 
             blockParenDepthStack->push_back(parenDepth);
             inStatementIndentStackSizeStack->push_back(inStatementIndentStack->size());
@@ -1039,6 +1068,7 @@ string ASBeautifier::beautify(const string &originalLine)
             }
             if (pos >= iLength)
                 pos--;
+            int min_indent = pos + 1;
             while (pos < iLength)
             {
                 if( !isWhiteSpace(line[pos]) )
@@ -1047,8 +1077,10 @@ string ASBeautifier::beautify(const string &originalLine)
             }
             if (pos >= iLength)
                 pos--;
+            if (!trimWhiteSpace)
+                min_indent = pos;
 
-            registerInStatementIndent(string(line.c_str()+pos), 0, spaceTabCount, pos, false);
+            registerInStatementIndent(string(line.c_str()+pos), 0, spaceTabCount+j-i, min_indent, false);
             isInStatement = true;
         }
     }
@@ -1083,6 +1115,11 @@ string ASBeautifier::beautify(const string &originalLine)
              && previousLastLineHeader != NULL
              && previousLastLineHeader != &AS_OPEN_BRACKET)
         tabCount -= 1; //lineOpeningBlocksNum - (blockIndent ? 1 : 0);
+    else if (isInModule)
+        --tabCount;
+
+    if (moduleShouldExit)
+        isInModule = false;
 
     if (tabCount < 0)
         tabCount = 0;

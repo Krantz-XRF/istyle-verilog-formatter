@@ -60,6 +60,8 @@ string _suffix = ".orig";
 const string _version = "1.22";
 bool shouldBackupFile = true;
 
+int maxEmptyLines = -1;
+
 // --------------------------------------------------------------------------
 // Helper Functions
 // --------------------------------------------------------------------------
@@ -112,6 +114,24 @@ bool parseOption(ASFormatter &formatter, const string &arg, const string &errorI
         formatter.setSpaceIndentation(4);
         formatter.setBracketFormatMode(ATTACH_MODE);
         formatter.setSwitchIndent(false);
+    }
+    else if ( arg == "trim" )
+    {
+        formatter.setTrimWhiteSpace(true);
+    }
+    else if ( IS_PARAM_OPTION(arg, "trim-lines=") )
+    {
+        string maxEmptyLinesStr = GET_PARAM(arg, "trim-lines=");
+        if (maxEmptyLinesStr.length() > 0)
+        {
+            maxEmptyLines = atoi(maxEmptyLinesStr.c_str());
+            if(maxEmptyLines==0)
+            {
+                (*_err) << errorInfo << arg << endl;
+                return false; // unknown option
+            }
+        }
+        formatter.setTrimWhiteSpace(true);
     }
     else if ( IS_PARAM_OPTIONS(arg, "t", "indent=tab=") )
     {
@@ -585,10 +605,18 @@ bool isWriteable( char const * const filename )
 
 void formatUsingStreams(ASFormatter &formatter, istream *in, ostream *out) {
     formatter.init(new ASStreamIterator(in));
+    int emptyLines = 0;
     while (formatter.hasMoreLines())
     {
-        *out << formatter.nextLine();
-        if (formatter.hasMoreLines())
+        std::string line = formatter.nextLine();
+        if (line.empty())
+            ++emptyLines;
+        else
+        {
+            emptyLines = 0;
+            *out << line;
+        }
+        if (formatter.hasMoreLines() && (maxEmptyLines < 0 || emptyLines <= maxEmptyLines))
             *out << endl;
     }
 }
